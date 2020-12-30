@@ -1,27 +1,24 @@
+use futures::Stream;
 use libc::chmod;
 use std::ffi::CString;
 use std::io::{self, Error};
-use futures::Stream;
-use tokio::prelude::*;
-use tokio::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::mem::MaybeUninit;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::{UnixListener, UnixStream};
 
 /// Socket permissions and ownership on UNIX
 pub struct SecurityAttributes {
     // read/write permissions for owner, group and others in unix octal.
-    mode: Option<u16>
+    mode: Option<u16>,
 }
 
 impl SecurityAttributes {
     /// New default security attributes. These only allow access by the
     /// process’s own user and the system administrator.
     pub fn empty() -> Self {
-        SecurityAttributes {
-            mode: Some(0o600)
-        }
+        SecurityAttributes { mode: Some(0o600) }
     }
 
     /// New security attributes that allow everyone to connect.
@@ -41,9 +38,7 @@ impl SecurityAttributes {
     /// This does not work on unix, where it is equivalent to
     /// [`SecurityAttributes::allow_everyone_connect`].
     pub fn allow_everyone_create() -> io::Result<Self> {
-        Ok(SecurityAttributes {
-            mode: None
-        })
+        Ok(SecurityAttributes { mode: None })
     }
 
     /// called in unix, after server socket has been created
@@ -52,7 +47,7 @@ impl SecurityAttributes {
         let path = CString::new(path.to_owned())?;
         if let Some(mode) = self.mode {
             if chmod(path.as_ptr(), mode as _) == -1 {
-                return Err(Error::last_os_error())
+                return Err(Error::last_os_error());
             }
         }
 
@@ -67,9 +62,24 @@ pub struct Endpoint {
     unix_listener: Option<UnixListener>,
 }
 
+struct IncomingStream<'a>(&'a mut UnixListener);
+
+impl<'a> Stream for IncomingStream<'a> {
+    type Item = io::Result<UnixStream>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        match self.0.poll_accept(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok((stream, _addr))) => Poll::Ready(Some(Ok(stream))),
+            Poll::Ready(Err(inner)) => Poll::Ready(Some(Err(inner))),
+        }
+    }
+}
+
 impl Endpoint {
     /// Stream of incoming connections
-    pub fn incoming(&mut self) -> io::Result<impl Stream<Item = tokio::io::Result<impl AsyncRead + AsyncWrite>> + '_> {
+    pub fn incoming(
+        &mut self,
+    ) -> io::Result<impl Stream<Item = tokio::io::Result<impl AsyncRead + AsyncWrite>> + '_> {
         self.unix_listener = Some(self.inner()?);
         unsafe {
             // the call to bind in `inner()` creates the file
@@ -78,7 +88,7 @@ impl Endpoint {
         };
         // for some unknown reason, the Incoming struct borrows the listener
         // so we have to hold on to the listener in order to return the Incoming struct.
-        Ok(self.unix_listener.as_mut().unwrap().incoming())
+        Ok(IncomingStream(self.unix_listener.as_mut().unwrap()))
     }
 
     /// Inner platform-dependant state of the endpoint
@@ -132,15 +142,11 @@ impl Connection {
 }
 
 impl AsyncRead for Connection {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
-        self.inner.prepare_uninitialized_buffer(buf)
-    }
-
     fn poll_read(
         self: Pin<&mut Self>,
         ctx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         let this = Pin::into_inner(self);
         Pin::new(&mut this.inner).poll_read(ctx, buf)
     }

@@ -6,17 +6,17 @@ use winapi::um::securitybaseapi::*;
 use winapi::um::winbase::{LocalAlloc, LocalFree};
 use winapi::um::winnt::*;
 
+use futures::Stream;
 use std::io;
 use std::marker;
 use std::mem;
-use std::ptr;
-use futures::Stream;
-use tokio::prelude::*;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::path::Path;
 use std::mem::MaybeUninit;
+use std::path::Path;
+use std::pin::Pin;
+use std::ptr;
+use std::task::{Context, Poll};
 use tokio::io::PollEvented;
+use tokio::prelude::*;
 
 type NamedPipe = PollEvented<mio_named_pipes::NamedPipe>;
 
@@ -30,7 +30,10 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Stream of incoming connections
-    pub fn incoming(mut self) -> io::Result<impl Stream<Item = tokio::io::Result<impl AsyncRead + AsyncWrite>> + 'static> {
+    pub fn incoming(
+        mut self,
+    ) -> io::Result<impl Stream<Item = tokio::io::Result<impl AsyncRead + AsyncWrite>> + 'static>
+    {
         let pipe = self.inner()?;
         Ok(Incoming {
             path: self.path.clone(),
@@ -151,9 +154,10 @@ impl Stream for Incoming {
             Ok(()) => {
                 log::trace!("Incoming connection polled successfully");
                 let new_listener = self.inner.replacement_pipe()?;
-                Poll::Ready(
-                    Some(Ok(Connection::wrap(std::mem::replace(&mut self.inner.pipe, new_listener))))
-                )
+                Poll::Ready(Some(Ok(Connection::wrap(std::mem::replace(
+                    &mut self.inner.pipe,
+                    new_listener,
+                )))))
             }
             Err(e) => {
                 if e.kind() == io::ErrorKind::WouldBlock {
@@ -225,13 +229,15 @@ pub const DEFAULT_SECURITY_ATTRIBUTES: SecurityAttributes = SecurityAttributes {
         descriptor: SecurityDescriptor {
             descriptor_ptr: ptr::null_mut(),
         },
-        acl: Acl { acl_ptr: ptr::null_mut() },
+        acl: Acl {
+            acl_ptr: ptr::null_mut(),
+        },
         attrs: SECURITY_ATTRIBUTES {
             nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: ptr::null_mut(),
             bInheritHandle: 0,
         },
-    })
+    }),
 };
 
 impl SecurityAttributes {
@@ -500,5 +506,4 @@ mod test {
             .allow_everyone_connect()
             .expect("failed to create security attributes that allow everyone to read and write to/from a pipe");
     }
-
 }

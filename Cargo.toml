@@ -17,7 +17,7 @@ log = "0.4"
 mio-named-pipes = "0.1"
 miow = "0.3.3"
 rand = "0.7"
-tokio = { version = "0.2", features = ["io-driver", "io-util", "uds", "stream", "rt-core", "macros", "time"] }
+tokio = { version = "1.0.1", features = ["io-util", "net"] }
 libc = "0.2.65"
 
 [target.'cfg(windows)'.dependencies]
